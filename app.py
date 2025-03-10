@@ -123,7 +123,7 @@ if 'current_video_id' not in st.session_state:
 if 'cache_cleared' not in st.session_state:
     st.session_state.cache_cleared = False
 
-st.title("YouTube Transcript")
+st.title("YouTube Content Summarizer")
 
 # Adjust input and button layout
 youtube_link = st.text_input("Enter YouTube Video Link")
