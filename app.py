@@ -157,7 +157,7 @@ with col2:
 
             except Exception as e:
                 st.error(f"An error occurred: {e}")
-                st.info("Try another video or check if the video has captions enabled.")
+                st.info("Use Clear Cache!, if check if the video has captions enabled or Try another video.")
         else:
             st.error("Please provide a valid YouTube link.")
 
