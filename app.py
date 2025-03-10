@@ -42,49 +42,40 @@ def extract_transcript_details(youtube_video_url):
         if not video_id:
             raise ValueError("Invalid YouTube video URL. Could not extract video ID.")
         
-        # Initialize session state for retry count if not exists
         if 'retry_count' not in st.session_state:
             st.session_state.retry_count = 0
         
-        max_retries = 3
-        retry_delay = 1  # seconds
+        max_retries = 5  # Increased retries
+        retry_delay = 2  # Increased delay
 
         while st.session_state.retry_count < max_retries:
             try:
-                # Try to get from cache first
                 transcript_text = cached_fetch_transcript(video_id)
-                st.session_state.retry_count = 0  # Reset on success
-                break
+                st.session_state.retry_count = 0
+                return " ".join(t["text"] for t in transcript_text)
             except Exception as e:
                 st.session_state.retry_count += 1
                 if st.session_state.retry_count < max_retries:
-                    time.sleep(retry_delay)
+                    time.sleep(retry_delay * st.session_state.retry_count)  # Exponential backoff
                     continue
-                # If all retries failed, try alternative methods
                 try:
                     transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-                    # Try multiple language options
-                    for lang in ['en', 'en-US', 'en-GB', 'a.en']:
+                    for lang in ['en', 'en-US', 'en-GB', 'a.en', 'auto']:
                         try:
                             transcript_text = transcript_list.find_transcript([lang]).fetch()
-                            break
+                            return " ".join(t["text"] for t in transcript_text)
                         except:
                             continue
-                    if not transcript_text:
-                        raise ValueError("No suitable transcript found")
+                    raise ValueError("""Unable to access video captions. Please:
+                    1. Clear cache and try again
+                    2. Verify the video has captions enabled
+                    3. Try a different video
+                    4. If problem persists, the service might be temporarily unavailable""")
                 except Exception as inner_e:
-                    raise ValueError("""No transcript available. Please try:
-                    1. Refreshing the page
-                    2. Waiting a few minutes
-                    3. Using a different video with captions
-                    Note: Some videos may work locally but not in deployed environment due to API limitations.""")
-
-        transcript = ""
-        for i in transcript_text:
-            transcript += " " + i["text"]
-
-        return transcript
-
+                    raise ValueError("""Service temporarily unavailable. Please:
+                    1. Clear cache
+                    2. Wait a few minutes
+                    3. Try a different video with captions enabled""")
     except Exception as e:
         raise e
 
@@ -157,8 +148,12 @@ with col2:
                         st.session_state.current_video_id = extract_video_id(youtube_link)
 
             except Exception as e:
-                # st.error(f"An error occurred: {e}")
-                st.info("Use Clear Cache!, if check if the video has captions enabled or Try another video.")
+                st.error("Unable to process video")
+                st.info("""Please try the following:
+                1. Click 'Clear Cache' button
+                2. Verify the video has captions/subtitles enabled
+                3. Try a different video
+                4. If issues persist, wait a few minutes and try again""")
         else:
             st.error("Please provide a valid YouTube link.")
 
