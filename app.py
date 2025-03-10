@@ -156,7 +156,7 @@ with col2:
                         st.session_state.current_video_id = extract_video_id(youtube_link)
 
             except Exception as e:
-                st.error(f"An error occurred: {e}")
+                # st.error(f"An error occurred: {e}")
                 st.info("Use Clear Cache!, if check if the video has captions enabled or Try another video.")
         else:
             st.error("Please provide a valid YouTube link.")
