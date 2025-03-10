@@ -5,7 +5,8 @@ import google.generativeai as genai
 from youtube_transcript_api import YouTubeTranscriptApi
 import re
 import io
-import requests
+import time
+from functools import lru_cache
 
 # Try to import docx, provide fallback if not available
 try:
@@ -30,32 +31,53 @@ def extract_video_id(youtube_link):
         return match.group(1)
     return None
 
-# Function to extract transcript from YouTube
+# Add caching for transcript fetching
+@lru_cache(maxsize=100)
+def cached_fetch_transcript(video_id):
+    return YouTubeTranscriptApi.get_transcript(video_id)
+
 def extract_transcript_details(youtube_video_url):
     try:
         video_id = extract_video_id(youtube_video_url)
         if not video_id:
             raise ValueError("Invalid YouTube video URL. Could not extract video ID.")
         
-        try:
-            # First attempt with default language
-            transcript_text = YouTubeTranscriptApi.get_transcript(video_id)
-        except Exception as e:
-            # Second attempt with available languages
+        # Initialize session state for retry count if not exists
+        if 'retry_count' not in st.session_state:
+            st.session_state.retry_count = 0
+        
+        max_retries = 3
+        retry_delay = 1  # seconds
+
+        while st.session_state.retry_count < max_retries:
             try:
-                transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-                # Try to get English transcript first
+                # Try to get from cache first
+                transcript_text = cached_fetch_transcript(video_id)
+                st.session_state.retry_count = 0  # Reset on success
+                break
+            except Exception as e:
+                st.session_state.retry_count += 1
+                if st.session_state.retry_count < max_retries:
+                    time.sleep(retry_delay)
+                    continue
+                # If all retries failed, try alternative methods
                 try:
-                    transcript_text = transcript_list.find_transcript(['en']).fetch()
-                except:
-                    # If English not available, get any available transcript
-                    transcript_text = transcript_list.find_transcript(transcript_list.transcript_data['en']).fetch()
-            except Exception as inner_e:
-                raise ValueError("""No transcript available. This might be because:
-                1. Subtitles are disabled for this video
-                2. The video is private or age-restricted
-                3. The video doesn't have any captions
-                Please try another video or contact the video owner.""")
+                    transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+                    # Try multiple language options
+                    for lang in ['en', 'en-US', 'en-GB', 'a.en']:
+                        try:
+                            transcript_text = transcript_list.find_transcript([lang]).fetch()
+                            break
+                        except:
+                            continue
+                    if not transcript_text:
+                        raise ValueError("No suitable transcript found")
+                except Exception as inner_e:
+                    raise ValueError("""No transcript available. Please try:
+                    1. Refreshing the page
+                    2. Waiting a few minutes
+                    3. Using a different video with captions
+                    Note: Some videos may work locally but not in deployed environment due to API limitations.""")
 
         transcript = ""
         for i in transcript_text:
@@ -85,56 +107,87 @@ def create_word_document(summary):
     return doc_bytes
 
 # Streamlit interface
+st.set_page_config(
+    page_title="YouTube Transcript Summarizer",
+    page_icon="📝"
+    # Removed wide layout
+)
+
+# Initialize session state
+if 'processed_videos' not in st.session_state:
+    st.session_state.processed_videos = set()
+if 'current_summary' not in st.session_state:
+    st.session_state.current_summary = None
+if 'current_video_id' not in st.session_state:
+    st.session_state.current_video_id = None
+if 'cache_cleared' not in st.session_state:
+    st.session_state.cache_cleared = False
+
 st.title("YouTube Transcript")
+
+# Adjust input and button layout
 youtube_link = st.text_input("Enter YouTube Video Link")
 
-if st.button("Get Content"):
-    if youtube_link:
+# Place buttons side by side using columns
+col1, col2 = st.columns([1, 4])
+with col1:
+    if st.button("Clear Cache", help="Clear cached transcripts"):
         try:
-            with st.spinner('Fetching video transcript...'):
-                transcript_text = extract_transcript_details(youtube_link)
-
-            if transcript_text:
-                with st.spinner('Generating summary...'):
-                    summary = generate_gemini_content(transcript_text)
-
-                # Store the summary in a text file
-                with open("video_content.txt", "w", encoding="utf-8") as file:
-                    file.write(summary)
-
-                st.markdown("# Blog Content:")
-
-                if youtube_link:
-                    video_id = extract_video_id(youtube_link)
-                    if (video_id):
-                        st.image(f"http://img.youtube.com/vi/{video_id}/0.jpg", use_column_width=True)
-                    else:
-                        st.error("Invalid YouTube link. Could not extract video ID.")
-                        
-                st.write(summary)
-                # st.success("Summary has been saved to 'video_content.txt'")
-                
-                # Add text download button
-                st.download_button(
-                    label="Download as Text",
-                    data=summary.encode('utf-8'),
-                    file_name="video_summary.txt",
-                    mime="text/plain"
-                )
-                
-                # Add Word document download button only if docx is available
-                if DOCX_AVAILABLE:
-                    word_doc = create_word_document(summary)
-                    st.download_button(
-                        label="Download as Word Document",
-                        data=word_doc,
-                        file_name="video_summary.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    )
-                
+            cached_fetch_transcript.cache_clear()
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            st.success("Cache cleared!")
+            time.sleep(0.5)
+            st.rerun()
         except Exception as e:
-            st.error(f"An error occurred: {e}")
-            st.info("Try another video or check if the video has captions enabled.")
-    else:
-        st.error("Please provide a valid YouTube link.")
+            st.error(f"Error clearing cache: {e}")
+
+with col2:
+    if st.button("Get Content", use_container_width=True):
+        if youtube_link:
+            try:
+                with st.spinner('Fetching video transcript...'):
+                    transcript_text = extract_transcript_details(youtube_link)
+
+                if transcript_text:
+                    with st.spinner('Generating summary...'):
+                        summary = generate_gemini_content(transcript_text)
+                        st.session_state.current_summary = summary
+                        st.session_state.current_video_id = extract_video_id(youtube_link)
+
+            except Exception as e:
+                st.error(f"An error occurred: {e}")
+                st.info("Try another video or check if the video has captions enabled.")
+        else:
+            st.error("Please provide a valid YouTube link.")
+
+# Display content container (outside the if st.button block)
+if st.session_state.current_summary:
+    st.markdown("# Blog Content:")
+    
+    if st.session_state.current_video_id:
+        st.image(f"http://img.youtube.com/vi/{st.session_state.current_video_id}/0.jpg", use_column_width=True)
+    
+    st.write(st.session_state.current_summary)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.download_button(
+            label="Download as Text",
+            data=st.session_state.current_summary.encode('utf-8'),
+            file_name="video_summary.txt",
+            mime="text/plain",
+            key="text_download"
+        )
+    
+    if DOCX_AVAILABLE:
+        with col2:
+            word_doc = create_word_document(st.session_state.current_summary)
+            st.download_button(
+                label="Download as Word Document",
+                data=word_doc,
+                file_name="video_summary.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                key="word_download"
+            )
 
