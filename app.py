@@ -5,6 +5,7 @@ import google.generativeai as genai
 from youtube_transcript_api import YouTubeTranscriptApi
 import re
 import io
+import requests
 
 # Try to import docx, provide fallback if not available
 try:
@@ -36,9 +37,27 @@ def extract_transcript_details(youtube_video_url):
         if not video_id:
             raise ValueError("Invalid YouTube video URL. Could not extract video ID.")
         
-        transcript_text = YouTubeTranscriptApi.get_transcript(video_id)  # Use this Video ID to access the YouTube Video, Use the YT's Caption for the content
+        try:
+            # First attempt with default language
+            transcript_text = YouTubeTranscriptApi.get_transcript(video_id)
+        except Exception as e:
+            # Second attempt with available languages
+            try:
+                transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+                # Try to get English transcript first
+                try:
+                    transcript_text = transcript_list.find_transcript(['en']).fetch()
+                except:
+                    # If English not available, get any available transcript
+                    transcript_text = transcript_list.find_transcript(transcript_list.transcript_data['en']).fetch()
+            except Exception as inner_e:
+                raise ValueError("""No transcript available. This might be because:
+                1. Subtitles are disabled for this video
+                2. The video is private or age-restricted
+                3. The video doesn't have any captions
+                Please try another video or contact the video owner.""")
 
-        transcript = ""  # Separated content stored here
+        transcript = ""
         for i in transcript_text:
             transcript += " " + i["text"]
 
@@ -72,10 +91,12 @@ youtube_link = st.text_input("Enter YouTube Video Link")
 if st.button("Get Content"):
     if youtube_link:
         try:
-            transcript_text = extract_transcript_details(youtube_link)
+            with st.spinner('Fetching video transcript...'):
+                transcript_text = extract_transcript_details(youtube_link)
 
             if transcript_text:
-                summary = generate_gemini_content(transcript_text)
+                with st.spinner('Generating summary...'):
+                    summary = generate_gemini_content(transcript_text)
 
                 # Store the summary in a text file
                 with open("video_content.txt", "w", encoding="utf-8") as file:
@@ -113,6 +134,7 @@ if st.button("Get Content"):
                 
         except Exception as e:
             st.error(f"An error occurred: {e}")
+            st.info("Try another video or check if the video has captions enabled.")
     else:
         st.error("Please provide a valid YouTube link.")
 
