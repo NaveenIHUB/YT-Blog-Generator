@@ -125,9 +125,9 @@ if 'cache_cleared' not in st.session_state:
 
 st.title("YouTube Content Summarizer")
 
-
 # Adjust input and button layout
 youtube_link = st.text_input("Enter YouTube Video Link")
+
 
 # Place buttons side by side using columns
 col1, col2 = st.columns([1, 4])
