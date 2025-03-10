@@ -91,7 +91,7 @@ if st.button("Get Content"):
                         st.error("Invalid YouTube link. Could not extract video ID.")
                         
                 st.write(summary)
-                st.success("Summary has been saved to 'video_content.txt'")
+                # st.success("Summary has been saved to 'video_content.txt'")
                 
                 # Add text download button
                 st.download_button(
